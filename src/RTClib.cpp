@@ -97,22 +97,26 @@ const uint8_t daysInMonth[] PROGMEM = {31, 28, 31, 30, 31, 30,
 /**************************************************************************/
 /*!
     @brief  Given a date, return number of days since 2000/01/01,
-            valid for 2000--2099
-    @param y Year
+            valid for 2000-2199
+    @param y Year (2000-2199) or (0-199)
     @param m Month
     @param d Day
     @return Number of days
 */
 /**************************************************************************/
 static uint16_t date2days(uint16_t y, uint8_t m, uint8_t d) {
-  if (y >= 2000U)
+  if (y >= 2000U && y < 2200)
     y -= 2000U;
+  // Validate the date, especialy a month > 12 as it could read arbitrary memory. 
+  if ((y >= 200) || (m > 12) || (d > 31)) {
+    return 0; // Invalid date
+  }
   uint16_t days = d;
   for (uint8_t i = 1; i < m; ++i)
     days += pgm_read_byte(daysInMonth + i - 1);
   if (m > 2 && y % 4 == 0)
     ++days;
-  return days + 365 * y + (y + 3) / 4 - 1;
+  return days + 365 * y + (y + 3) / 4 -  (y < 100? 1 : 2); // 2100 is NOT a leap year
 }
 
 /**************************************************************************/
@@ -149,6 +153,7 @@ static uint32_t time2ulong(uint16_t days, uint8_t h, uint8_t m, uint8_t s) {
        this constructor takes an unsigned argument. Because of this, it does
        _not_ suffer from the
        [year 2038 problem](https://en.wikipedia.org/wiki/Year_2038_problem).
+       which becomes a 2106 problem instead.
 
     If called without argument, it returns the earliest time representable
     by this class: 2000-01-01 00:00:00.
@@ -174,6 +179,9 @@ DateTime::DateTime(uint32_t t) {
       break;
     days -= 365 + leap;
   }
+  if (yOff >= 100) {
+    days++; // 2100 is not a leap year, so we need to add one day for the extra leap day we subtracted.
+  }
   for (m = 1; m < 12; ++m) {
     uint8_t daysPerMonth = pgm_read_byte(daysInMonth + m - 1);
     if (leap && m == 2)
@@ -188,27 +196,51 @@ DateTime::DateTime(uint32_t t) {
 /**************************************************************************/
 /*!
     @brief  Constructor from (year, month, day, hour, minute, second).
+    @note   The minimum year is 1, or 2001, so that the DayOfWeek() calculation
+            works correctly. The maximum year is 199, or 2199.
     @warning If the provided parameters are not valid (e.g. 31 February),
            the constructed DateTime will be invalid.
     @see   The `isValid()` method can be used to test whether the
            constructed DateTime is valid.
-    @param year Either the full year (range: 2000--2099) or the offset from
-        year 2000 (range: 0--99).
+    @param year Either the full year (range: 2001--2199) or the offset from
+                year 2000 (range: 1--199).
     @param month Month number (1--12).
     @param day Day of the month (1--31).
     @param hour,min,sec Hour (0--23), minute (0--59) and second (0--59).
+    @remarks The WeekdayEpoch is an exception, its year is always 2000.
+             This constructor will allow year 2000 when the day is 1.
+             To set a date in the year 2000, use the constructor that
+             takes UNIX style seconds since 1970-01-01 00:00:00.
 */
 /**************************************************************************/
 DateTime::DateTime(uint16_t year, uint8_t month, uint8_t day, uint8_t hour,
                    uint8_t min, uint8_t sec) {
   if (year >= 2000U)
-    year -= 2000U;
-  yOff = year;
+    year = (year - 2000U);
+  // In order for the dayOfTheWeek() to work correctly the must be 2001 or later.
+  // When calculating dayOfTheWeek the 'WeekdayEpoch' is subtracted from the date.
+  // The WeekdayEpoch is always in the year 2000, so the date must be later.
+  yOff = (year > 0) ? year % 200U : (day == 1 ? 0 : 1U);
   m = month;
   d = day;
-  hh = hour;
-  mm = min;
-  ss = sec;
+  hh = hour % 24;
+  mm = min % 60;
+  ss = sec % 60;
+}
+
+/*!
+    @brief Constructor from the `tm` structure (standard time.h).
+    @param rtmTime Reference to `tm` structure.
+    @remarks The `tm` year is an offset from 1900, we subtract 100 to bring the offset to 2000.   
+             The `tm` month range is 0-11, we add 1 to make it 1-12.
+*/
+DateTime::DateTime(struct tm& rtmTime) {
+  yOff = (rtmTime.tm_year + 1900 - 2000);   // Move year offset from 1900 to 2000 (i.e -100)
+  m    = (rtmTime.tm_mon + 1);   // convert from 0-11 to 1-12 month format.
+  d    = rtmTime.tm_mday;
+  hh   = rtmTime.tm_hour;
+  mm   = rtmTime.tm_min;
+  ss   = rtmTime.tm_sec;
 }
 
 /**************************************************************************/
@@ -223,17 +255,21 @@ DateTime::DateTime(const DateTime &copy)
 
 /**************************************************************************/
 /*!
-    @brief  Convert a string containing two digits to uint8_t, e.g. "09" returns
-   9
+    @brief  Convert a string containing two digits to uint8_t, 
+            e.g. "09" returns 9
     @param p Pointer to a string containing two digits
+    @return The converted value (0 - 99), or 255 if the string is not valid
 */
 /**************************************************************************/
 static uint8_t conv2d(const char *p) {
   uint8_t v = 0;
   if ('0' <= *p && *p <= '9')
     v = *p - '0';
-  return 10 * v + *++p - '0';
-}
+   if ('0' <= *++p && *p <= '9')
+     return 10 * v + *p - '0';
+   else
+     return v;
+}     
 
 /**************************************************************************/
 /*!
@@ -384,13 +420,39 @@ DateTime::DateTime(const char *iso8601dateTime) {
 */
 /**************************************************************************/
 bool DateTime::isValid() const {
-  if (yOff >= 100)
+  if (yOff >= 200)
     return false;
   DateTime other(unixtime());
   return yOff == other.yOff && m == other.m && d == other.d && hh == other.hh &&
          mm == other.mm && ss == other.ss;
 }
 
+/**************************************************************************/
+/*!
+    @brief  Check whether the time in this DateTime instance is valid.
+    @return true if the time is valid, false otherwise.
+*/
+/**************************************************************************/
+bool DateTime::isTimeValid() const {
+   return (hh < 24) && (mm < 60) && (ss < 60);
+}
+
+/**************************************************************************/
+/*!
+   @brief  Check whether the date in this DateTime instance is valid.
+   @return true if the date is valid, false otherwise.
+*/
+/**************************************************************************/
+bool DateTime::isDateValid() const {
+   if (yOff >= 200)
+     return false;
+
+   // `other` is just the same date at 00:00:00; converted to UNIX seconds.
+   DateTime other((*this - TimeSpan(0, hh, mm, ss)).unixtime());
+   return yOff == other.yOff && m == other.m && d == other.d;
+}
+
+ 
 /**************************************************************************/
 /*!
     @brief  Writes the DateTime as a string in a user-defined format.
@@ -401,7 +463,7 @@ bool DateTime::isValid() const {
 
     | specifier | output                                                 |
     |-----------|--------------------------------------------------------|
-    | YYYY      | the year as a 4-digit number (2000--2099)              |
+    | YYYY      | the year as a 4-digit number (2000--2199)              |
     | YY        | the year as a 2-digit number (00--99)                  |
     | MM        | the month as a 2-digit number (01--12)                 |
     | MMM       | the abbreviated English month name ("Jan"--"Dec")      |
@@ -409,7 +471,8 @@ bool DateTime::isValid() const {
     | DDD       | the abbreviated English day of the week ("Mon"--"Sun") |
     | AP        | either "AM" or "PM"                                    |
     | ap        | either "am" or "pm"                                    |
-    | hh        | the hour as a 2-digit number (00--23 or 01--12)        |
+    | hh        | the hour as a   2-digit number       (00--23 / 01--12) |
+    | HH        | the hour as a 1/2-digit number/space (_0--23 / _1--12) |
     | mm        | the minute as a 2-digit number (00--59)                |
     | ss        | the second as a 2-digit number (00--59)                |
 
@@ -459,12 +522,13 @@ char *DateTime::toString(char *buffer) const {
   }
 
   for (size_t i = 0; i < strlen(buffer) - 1; i++) {
-    if (buffer[i] == 'h' && buffer[i + 1] == 'h') {
+    if ((buffer[i]     == 'h' || buffer[i]     == 'H') &&
+        (buffer[i + 1] == 'h' || buffer[i + 1] == 'H')) {
       if (!apTag) { // 24 Hour Mode
-        buffer[i] = '0' + hh / 10;
+        buffer[i] = (hh < 10 ? (buffer[i] == 'H' ? ' ' : '0') : '0' + hh / 10);
         buffer[i + 1] = '0' + hh % 10;
       } else { // 12 Hour Mode
-        buffer[i] = '0' + hourReformatted / 10;
+        buffer[i] = (hourReformatted < 10 ? (buffer[i] == 'H' ? ' ' : '0') : '0' + hourReformatted / 10);
         buffer[i + 1] = '0' + hourReformatted % 10;
       }
     }
@@ -476,9 +540,11 @@ char *DateTime::toString(char *buffer) const {
       buffer[i] = '0' + ss / 10;
       buffer[i + 1] = '0' + ss % 10;
     }
+
+    // Get the name of the weekday give the day number and offset.
     if (buffer[i] == 'D' && buffer[i + 1] == 'D' && buffer[i + 2] == 'D') {
-      static PROGMEM const char day_names[] = "SunMonTueWedThuFriSat";
-      const char *p = &day_names[3 * dayOfTheWeek()];
+      static PROGMEM const char day_names[] = "MonTueWedThuFriSatSun";
+      const char *p = &day_names[3 * ((dayOfTheWeek() + WEEKDAY_NAME_OFFSET) % 7)];
       buffer[i] = pgm_read_byte(p);
       buffer[i + 1] = pgm_read_byte(p + 1);
       buffer[i + 2] = pgm_read_byte(p + 2);
@@ -530,29 +596,61 @@ char *DateTime::toString(char *buffer) const {
 
 /**************************************************************************/
 /*!
+      @brief  Writes the DateTime as a string in a user-defined format.
+   
+      This method is similar to `toString(char *buffer)`, but it allows the
+      user to specify the format string directly in the method call. The
+      format string can contain any of the specifiers described in
+      `toString(char *buffer)`.
+   
+      @param buffer Pointer to a character array where the formatted date and/or
+         time will be written.
+      @param size Size of the buffer.
+      @param format Format string containing specifiers for formatting the date
+         and/or time.
+   
+      @return A pointer to the provided buffer, which contains the formatted
+         date and/or time. The buffer is guaranteed to be null-terminated
+         provided the input is valid, otherwise a `nullptr` is returned.
+*/
+/**************************************************************************/
+char* DateTime::toString(char* buffer, size_t size, const char* format) const {
+  if (size == 0 || buffer == nullptr || format == nullptr) { 
+    return nullptr;
+  }
+  strncpy(buffer, format, size - 1);
+  buffer[size - 1] = '\0'; // ensure a null termination
+  return toString(buffer);
+}
+
+/**************************************************************************/
+/*!
       @brief  Return the hour in 12-hour format.
       @return Hour (1--12).
 */
 /**************************************************************************/
 uint8_t DateTime::twelveHour() const {
-  if (hh == 0 || hh == 12) { // midnight or noon
+  if (hh == 0) { // midnight
     return 12;
-  } else if (hh > 12) { // 1 o'clock or later
+  } else if (hh > 12) { // 1 o'clock PM or later
     return hh - 12;
-  } else { // morning
+  } else { // morning or noon
     return hh;
   }
 }
 
 /**************************************************************************/
 /*!
-    @brief  Return the day of the week.
-    @return Day of week as an integer from 0 (Sunday) to 6 (Saturday).
+    @brief  Return the day of the week using WeekdayEpoch as the starting Day of Week.
+    @return Day of week as an integer from 0 (WeekdayEpoch's Day of the Week) to 6
+    @remarks  The day of the week that 'WeekdayEpoch' falls on is the start of the week.
+              The first month in 2000 where the 1st fell on the weekday to be
+              considered the start of the week is selected as the WeekdayEpoch.
 */
 /**************************************************************************/
 uint8_t DateTime::dayOfTheWeek() const {
-  uint16_t day = date2days(yOff, m, d);
-  return (day + 6) % 7; // Jan 1, 2000 is a Saturday, i.e. returns 6
+   uint16_t days = date2days(yOff, m, d) - date2days(WeekdayEpoch.yOff, WeekdayEpoch.m, WeekdayEpoch.d);
+   return (uint8_t)(days % 7); // Numeric Day of Week offset (0 - 6)
 }
 
 /**************************************************************************/
@@ -683,6 +781,11 @@ bool DateTime::operator==(const DateTime &right) const {
     `TIMESTAMP_DATE`), the time (`TIMESTAMP_TIME`), or both
     (`TIMESTAMP_FULL`).
 
+    @note `TIMESTAMP_TIME12`; `TIMESTAMP_TIME_HM`; `TIMESTAMP_TIME12_HM`;
+          `TIMESTAMP_DATE_DMY`; and `TIMESTAMP_MDY` are NOT ISO 8601 formats.
+          These formats are common formats used around the world in
+          addition to the `TIMESTAMP_TIME` and `TIMESTAMP_DATE` formats.
+
     @see The `toString()` method provides more general string formatting.
 
     @param opt Format of the timestamp
@@ -690,25 +793,73 @@ bool DateTime::operator==(const DateTime &right) const {
 */
 /**************************************************************************/
 String DateTime::timestamp(timestampOpt opt) const {
-  char buffer[25]; // large enough for any DateTime, including invalid ones
+  #define BUFFER_SIZE 25     // USE a #define instead of a number here.
+   char buffer[BUFFER_SIZE]; // large enough for any DateTime, including invalid ones
 
-  // Generate timestamp according to opt
+  // Generate timestamp according to `opt`
   switch (opt) {
   case TIMESTAMP_TIME:
-    // Only time
-    sprintf(buffer, "%02d:%02d:%02d", hh, mm, ss);
+    // Only time: Hour:Minute:Second
+    snprintf(buffer, BUFFER_SIZE, "%02d:%02d:%02d", hh, mm, ss);
     break;
   case TIMESTAMP_DATE:
-    // Only date
-    sprintf(buffer, "%u-%02d-%02d", 2000U + yOff, m, d);
+    // Only date: Year-Month-Day
+    snprintf(buffer, BUFFER_SIZE, "%u-%02d-%02d", 2000U + yOff, m, d);
     break;
+  case TIMESTAMP_DATETIME:
+    // Date and time: Year-Month-Day Hour:Minute:Second
+     snprintf(buffer, BUFFER_SIZE, "%u-%02d-%02d %02d:%02d:%02d", 2000U + yOff, m, d, hh, mm, ss);
+     break;
+  case TIMESTAMP_DATETIME12:
+     // Date and time: Year-Month-Day Hour:Minute:Second in 12 hour format with AM/PM
+     snprintf(buffer, BUFFER_SIZE, "%u-%02d-%02d %2d:%02d:%02d %s", 2000U + yOff, m, d,
+             hh % 12 == 0 ? 12 : hh % 12, mm, ss, hh < 12 ? "AM" : "PM");
+     break;
+  case TIMESTAMP_TIME12:
+     // Only time: Hour:Minute:Second in 12 hour format with AM/PM
+     snprintf(buffer, BUFFER_SIZE, "%2d:%02d:%02d %s", hh % 12 == 0 ? 12 : hh % 12,
+             mm, ss, hh < 12 ? "AM" : "PM");
+     break;
+  case TIMESTAMP_TIME_HM:
+     // Only time: Hour:Minute
+     snprintf(buffer, BUFFER_SIZE, "%02d:%02d:", hh, mm);
+     break;
+  case TIMESTAMP_TIME12_HM:
+     // Only time: Hour:Minute in 12 hour format with AM/PM
+     snprintf(buffer, BUFFER_SIZE, "%2d:%02d %s", hh % 12 == 0 ? 12 : hh % 12,
+             mm, hh < 12 ? "AM" : "PM");
+     break;
+  case TIMESTAMP_DATE_DMY:
+     // Only date: Day-Month-Year
+     snprintf(buffer, BUFFER_SIZE, "%02d-%02d-%u", d, m, 2000U + yOff);
+     break;
+  case TIMESTAMP_DATE_MDY:
+     // Only date: Month-Day-Year
+     snprintf(buffer, BUFFER_SIZE, "%02d-%02d-%u", m, d, 2000U + yOff);
+     break;
+  case TIMESTAMP_FULL:
   default:
-    // Full
-    sprintf(buffer, "%u-%02d-%02dT%02d:%02d:%02d", 2000U + yOff, m, d, hh, mm,
-            ss);
+    // Full date and time: Year-Month-DayTHour:Minute:Second
+    snprintf(buffer, BUFFER_SIZE, "%u-%02d-%02dT%02d:%02d:%02d", 2000U + yOff, m, d, hh, mm, ss);
+    break;
   }
+
   return String(buffer);
+  #undef BUFFER_SIZE
 }
+
+// Month in 2000 where the 1st of the month falls on the selected starting day of week.
+// The user / developer can decide which is the first day of the week (e.g. Monday, Sunday, etc.)
+// This date is then used to calculate which day of the week a given date is starting from
+// Their selected first day of the week. For example May 1, 2000 was a Monday, so 
+// Monday would be the first day of the week. If you want Sunday as the first day of the
+// week you'd choose October 1st, 2000, which was a Sunday.
+// So WeekdayEpoch.dayOfTheWeek() always returns 0, the first day of the week.
+const DateTime DateTime::WeekdayEpoch = DateTime(2000, FIRST_WEEKDAY_MONTH, 1, 0, 0, 0);
+
+// The epoch for the DateTime class, which is 1 Jan 2000, 00:00:00.
+// This can be used to calculate the time difference between two DateTime objects.
+const DateTime DateTime::DateTimeEpoch = DateTime(2000, 1, 1, 0, 0, 0);
 
 /**************************************************************************/
 /*!
