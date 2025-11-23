@@ -51,6 +51,10 @@ Adafruit invests time and resources providing this open source code, please supp
 Contributions are welcome! Please read our [Code of Conduct](https://github.com/adafruit/RTClib/blob/master/code-of-conduct.md)
 before contributing to help this project stay welcoming.
 
+## Testing
+
+To learn how to run tests for this library, see [TESTING.md](TESTING.md).
+
 ## Documentation and doxygen
 For the detailed API documentation, see https://adafruit.github.io/RTClib/html/index.html
 Documentation is produced by doxygen. Contributions should include documentation for any new code added.
