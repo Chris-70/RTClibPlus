@@ -88,7 +88,7 @@ For complete testing, you should run examples on actual hardware:
 
 1. Connect your RTC module (DS3231, PCF8523, DS1307, or PCF8563) to your Arduino
 2. Upload an example sketch appropriate for your RTC module
-3. Open the Serial Monitor (115200 baud for most examples)
+3. Open the Serial Monitor (57600 baud for most examples, 115200 for PCF8563)
 4. Verify the output shows correct date/time information
 
 #### Recommended test examples:
