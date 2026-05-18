@@ -3,7 +3,7 @@
 #define __DATETIME_H__
 
 #include <stdint.h>                    // Integer types: uint8_t; uint16_t; etc.
-#include <wstring.h>                   // Arduino String class for __FlashStringHelper()
+#include <WString.h>                   // Arduino String class for __FlashStringHelper()
 #include <time.h>                      // For time_t an tm types.
 
 class TimeSpan;
