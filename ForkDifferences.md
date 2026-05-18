@@ -161,7 +161,7 @@ The `dayOfTheWeek()` calculation ensures the RTC chip's day-of-week stays synchr
 
 The DS3231 uses bit 7 of the month register (05h) to store the century bit:
 - `0` = 2000-2099 (20xx)
-- `1` = 2100-2199 (21xx)
+- `1` = 2100-2136 (21xx)
 
 **Implementation:**
 ```cpp
@@ -186,7 +186,7 @@ write_register(0x05, month_val);
 
 **Original Range:** 2000-2099 (implicit)
 
-**RTClibPlus Range:** 2001-2199 (explicit)
+**RTClibPlus Range:** 2001-2136 (explicit)
 
 **Year 2100 Leap Year Handling:**
 The year 2100 is **not** a leap year (divisible by 100 but not by 400). The `isLeapYear()` method was updated:
@@ -201,7 +201,7 @@ static bool isLeapYear(uint16_t year) {
 
 **Impact on Date Calculations:**
 - Day-of-week calculations now account for non-leap 2100
-- Days-since-epoch calculations handle the full 2001-2199 range
+- Days-since-epoch calculations handle the full 2001-2136 range
 - `daysInMonth()` returns 28 for February 2100
 
 ---
@@ -437,7 +437,7 @@ All classes in single `RTClib.h` file:
 |---------|-----------------|------------|--------|
 | **12-Hour Mode** | Not supported | Full hardware & software support | Major enhancement |
 | **Starting Day of Week** | Fixed (Sunday) | User-configurable | Cultural flexibility |
-| **Century Support** | No | Yes (2001-2199) | Extended date range |
+| **Century Support** | No | Yes (2001-2136) | Extended date range |
 | **toString() Formats** | Basic | Enhanced (HH, AP/ap) | Better formatting |
 | **TIMESTAMP Options** | 3 formats | 10 formats | More flexibility |
 | **Inheritance** | Protected | Public | Direct register access |
